@@ -52,38 +52,29 @@ class Actor(Network):
         # --- define layers here ---
         self.linear = nn.Sequential(
             # self.fa1 = nn.Linear(state_size - 6, hidden_size // 2 ** 2)
-            nn.Linear(state_size - 6, hidden_size),
+            nn.Linear(self.state_size, hidden_size),
             nn.SiLU(),
             nn.Linear(hidden_size, int(hidden_size * 2)),
             nn.SiLU(),
             nn.Linear(int(hidden_size * 2), int(hidden_size * 2)),
             nn.SiLU(),
             # self.fa4 = nn.Linear(int(hidden_size * 2), hidden_size // 2 ** 2) # 128
-            nn.Linear(int(hidden_size * 2), hidden_size // 2 ** 2), # 128
-            nn.Sigmoid()
+            nn.Linear(int(hidden_size * 2), state_size),
+            nn.SiLU()
         )
 
-        self.final_lin = nn.Sequential(
-            # nn.Linear(int(hidden_size * 2), hidden_size // 2 ** 1),
-            nn.Linear(state_size + hidden_size, hidden_size // 2 ** 1),
-            nn.LayerNorm(hidden_size // 2 ** 1),
-            nn.SiLU(),
-            nn.Linear(int(hidden_size / 2 ** 1), hidden_size // 2 ** 2),
-            nn.LayerNorm(hidden_size // 2 ** 2),
-            nn.SiLU(),
-            nn.Linear(hidden_size // 2 ** 2, hidden_size // 2 ** 3),
-            nn.LayerNorm(hidden_size // 2 ** 3),
-            nn.SiLU(),
-            nn.Linear(hidden_size // 2 ** 3, action_size)
-            # self.fa8 = nn.Linear(int(hidden_size / 2 ** 1), action_size)
-        )
+        self.residual = nn.Linear(state_size, hidden_size // 2 ** 2) # 128
+
+        self.fa5 = nn.Linear(hidden_size, int(hidden_size / 2 ** 1))
+        self.fa6 = nn.Linear(int(hidden_size / 2 ** 1 + 6), int(hidden_size / 2 ** 2))
+        self.fa7 = nn.Linear(int(hidden_size / 2 ** 2), int(hidden_size / 2 ** 3))
+        self.fa8 = nn.Linear(int(hidden_size / 2 ** 3), action_size)
 
         # --- conv layers for feature extraction ---
         self.conv_iter = 3
-        self.pooling_kernel_size = 2
+        self.pooling_kernel_size = 5
         inner_channel_size = 2 ** 5
-        fc_size = int(state_size / (self.pooling_kernel_size ** self.conv_iter)) * inner_channel_size
-        # fc_size = 704
+        fc_size = int(self.state_size / (self.pooling_kernel_size ** self.conv_iter)) * inner_channel_size
 
         self.conv = nn.Sequential(
             nn.Conv1d(1, inner_channel_size, 4, padding='same', padding_mode='circular'),
@@ -100,8 +91,8 @@ class Actor(Network):
             nn.MaxPool1d(self.pooling_kernel_size)
         )
 
-        # self.conv_fc = nn.Linear(fc_size, int(hidden_size / 2 ** 2)) # 128
-        self.conv_fc = nn.Linear(fc_size, hidden_size // 2 ** 2)
+        self.conv_fc = nn.Linear(fc_size, int(hidden_size / 2 ** 2)) # 128
+        # self.conv_fc = nn.Linear(704, hidden_size // 2 ** 2)
 
         # --- lstm ---
         # self.lstm = nn.LSTM(input_size=320 + state_size, hidden_size=hidden_size // 2, num_layers=2)
@@ -141,15 +132,16 @@ class Actor(Network):
             lidar_features = lidar_states.unsqueeze(dim=1)
             env_states = states[:, -6:]
             cat_dim = 1
-
+            # hidd = self.hidden_train
         else:
             lidar_states = states[:self.state_size]
             lidar_features = torch.unsqueeze(lidar_states, dim=0)
             env_states = states[-6:]
             cat_dim = 0
-
+            # hidd = self.hidden_real
 
         x = self.linear(lidar_states)
+        x = torch.sigmoid(self.residual(x + states))
 
         feature = self.conv(lidar_features)
         feature = torch.flatten(feature, start_dim=cat_dim)
@@ -173,14 +165,26 @@ class Actor(Network):
         lx, _ = self.lstm3(lx, hid)
         if cat_dim == 0:
             lx = torch.sigmoid(lx)[-1, 0, :]
+            # lx = torch.sigmoid(lx)[0:, -1, :]
         else:
             lx = torch.sigmoid(lx)[-1, :, :]
 
-
+            # lx = torch.sigmoid(lx)[-1:, :, :].transpose(0, 1)
         lx = torch.flatten(lx, start_dim=cat_dim).squeeze(cat_dim)
-        x = torch.cat((states, x, feature, lx, opx), cat_dim)
+        # x = torch.cat((states, x, feature, lx, opx), cat_dim)
+        # r_opx = torch.flip(opx, dims=[cat_dim])
+        x = torch.cat((x, feature, lx, opx), cat_dim)
 
-        action = torch.tanh(self.final_lin(x.unsqueeze(0))).squeeze(0)
+        # x = torch.cat((x, env_states), dim=cat_dim)
+        x = self.layer_norm2(self.fa5(x))
+        x = self.silu(x)
+        x = torch.cat((x, env_states), dim=cat_dim)
+        x = self.layer_norm3(self.fa6(x))
+        x = self.silu(x)
+        # x = torch.cat((x, env_states), dim=cat_dim)
+        x = self.layer_norm4(self.fa7(x))
+        x = self.silu(x)
+        action = torch.tanh(self.fa8(x))
 
         # -- define layers to visualize here (optional) ---
         if visualize and self.visual:
@@ -211,7 +215,6 @@ class Critic(Network):
     def forward(self, states, actions):
         xs = self.silu(self.l1(states))
         xa = self.silu(self.l2(actions))
-
         x = torch.cat((xs, xa), dim=1)
         x = self.silu(self.l3(x))
         x1 = self.l4(x)
@@ -225,7 +228,6 @@ class Critic(Network):
         return x1, x2
 
     def Q1_forward(self, states, actions):
-        states = self.state_filter(states)
         xs = self.silu(self.l1(states))
         xa = self.silu(self.l2(actions))
         x = torch.cat((xs, xa), dim=1)

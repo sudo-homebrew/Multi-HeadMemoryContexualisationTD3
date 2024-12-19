@@ -35,7 +35,7 @@ from ..common import utilities as util
 
 from .dqn import DQN
 from .ddpg import DDPG
-from .MQ3_td3 import TD3
+from .MQ_td3 import TD3
 
 from turtlebot3_msgs.srv import DrlStep, Goal
 from std_srvs.srv import Empty
