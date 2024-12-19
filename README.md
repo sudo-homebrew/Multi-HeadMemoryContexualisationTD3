@@ -10,7 +10,7 @@ Parer link : UNDERREVIEW
 - **Development:** Seunghyeop Nam
 - **Thanks to:** Tomasvr (https://github.com/tomasvr/turtlebot3_drlnav)
 
-### Upload Date: Not uploaded yet
+### Upload Date: 21.Oct.2024
 
 
 #### Simulation Videos
