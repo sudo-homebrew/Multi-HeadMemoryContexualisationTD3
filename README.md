@@ -1,4 +1,4 @@
-# Multi Head Memory Contextualising TD3 (mhmcTD3)
+# Multi Head Memory Contextualising TD3
 
 ## Introduction
 mhmcTD3 is a novel DRL algorithm for training LiDAR-base mobile robot for indoor self-navigation
